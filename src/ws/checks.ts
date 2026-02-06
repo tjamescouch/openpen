@@ -299,7 +299,7 @@ const rateLimiting: WsCheck = {
       await new Promise(r => setTimeout(r, 2000));
       const burstDuration = Date.now() - startBurst;
 
-      // Check for rate limit errors
+      // Check for rate limit errors in messages
       const rateLimitErrors = conn.messages.filter(m => {
         if (m.direction !== 'received') return false;
         const p = parseJson(m.data);
@@ -309,16 +309,26 @@ const rateLimiting: WsCheck = {
         return msg.includes('rate') || msg.includes('limit') || msg.includes('throttl') || msg.includes('too many');
       });
 
+      // Also check if connection was closed (server may disconnect instead of sending error)
+      const disconnected = !conn.connected;
+      const rateLimitClose = disconnected && (
+        conn.closedCode === 1008 ||
+        (conn.closedReason || '').toLowerCase().includes('rate limit')
+      );
+
       await close(conn);
 
-      if (rateLimitErrors.length > 0) {
+      if (rateLimitErrors.length > 0 || rateLimitClose) {
+        const evidence = rateLimitClose
+          ? `Connection closed with code ${conn.closedCode}: ${conn.closedReason}`
+          : rateLimitErrors[0]?.data.slice(0, 200) || '';
         return {
           checkId: 'ws-rate',
           checkName: 'Rate Limiting',
           status: 'pass',
           severity: 'info' as Severity,
-          description: `Server enforces rate limiting (${rateLimitErrors.length} rate limit responses for ${burstCount} burst messages)`,
-          evidence: rateLimitErrors[0]?.data.slice(0, 200) || '',
+          description: `Server enforces rate limiting (${rateLimitErrors.length > 0 ? rateLimitErrors.length + ' rate limit responses' : 'connection disconnected'} for ${burstCount} burst messages)`,
+          evidence,
           duration: Date.now() - start,
         };
       }
@@ -329,7 +339,7 @@ const rateLimiting: WsCheck = {
         status: 'warn',
         severity: 'medium' as Severity,
         description: `No rate limiting detected for ${burstCount} rapid messages in ${burstDuration}ms`,
-        evidence: `Sent ${burstCount} messages, received ${conn.messages.filter(m => m.direction === 'received').length} responses, no rate limit errors`,
+        evidence: `Sent ${burstCount} messages, received ${conn.messages.filter(m => m.direction === 'received').length} responses, no rate limit errors or disconnection`,
         remediation: 'Implement per-connection rate limiting to prevent message flooding',
         duration: Date.now() - start,
       };
@@ -444,6 +454,7 @@ const invalidMessages: WsCheck = {
     try {
       const conn = await connect(url, { timeout });
 
+      // Keep to 8 payloads to stay under pre-auth rate limits
       const payloads = [
         // Malformed JSON
         '{not valid json',
@@ -455,28 +466,29 @@ const invalidMessages: WsCheck = {
         // Type confusion
         '{"type":123}',
         '{"type":null}',
-        '{"type":true}',
-        '[]',
-        '"just a string"',
-        // Oversized field
-        JSON.stringify({ type: 'PING', data: 'A'.repeat(10000) }),
         // Prototype pollution
         '{"__proto__":{"admin":true}}',
-        '{"constructor":{"prototype":{"admin":true}}}',
       ];
 
       let crashed = false;
+      let rateLimited = false;
       let errorResponses = 0;
       let silentDrops = 0;
 
       for (const payload of payloads) {
         try {
           sendRaw(conn, payload);
-          await new Promise(r => setTimeout(r, 200));
+          await new Promise(r => setTimeout(r, 300));
 
           if (!conn.connected) {
-            crashed = true;
-            verbose(`  [ws-invalid] Server closed connection after: ${payload.slice(0, 60)}`);
+            // Distinguish rate limiting from actual crash
+            if (conn.closedCode === 1008 || (conn.closedReason || '').toLowerCase().includes('rate limit')) {
+              rateLimited = true;
+              verbose(`  [ws-invalid] Rate limited after: ${payload.slice(0, 60)}`);
+            } else {
+              crashed = true;
+              verbose(`  [ws-invalid] Server closed connection after: ${payload.slice(0, 60)}`);
+            }
             break;
           }
         } catch {
@@ -494,10 +506,21 @@ const invalidMessages: WsCheck = {
         return v.type === 'ERROR' || v.error;
       }).length;
 
-      const totalReceived = conn.messages.filter(m => m.direction === 'received').length;
-      silentDrops = payloads.length - errorResponses - (crashed ? 1 : 0);
+      silentDrops = payloads.length - errorResponses - (crashed || rateLimited ? 1 : 0);
 
       await close(conn);
+
+      if (rateLimited) {
+        return {
+          checkId: 'ws-invalid',
+          checkName: 'Invalid Message Handling',
+          status: 'pass',
+          severity: 'info' as Severity,
+          description: `Server rate-limited after ${conn.messages.length} malformed messages (expected behavior)`,
+          evidence: `Connection closed: code ${conn.closedCode}, ${errorResponses} error responses before disconnect`,
+          duration: Date.now() - start,
+        };
+      }
 
       if (crashed) {
         return {
@@ -506,7 +529,7 @@ const invalidMessages: WsCheck = {
           status: 'fail',
           severity: 'medium' as Severity,
           description: 'Server crashed or disconnected on malformed input',
-          evidence: `Connection dropped after ${conn.messages.length} messages`,
+          evidence: `Connection dropped (code: ${conn.closedCode}, reason: ${conn.closedReason}), ${conn.messages.length} messages exchanged`,
           remediation: 'Gracefully handle all malformed input without closing the connection',
           duration: Date.now() - start,
         };
