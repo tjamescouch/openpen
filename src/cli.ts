@@ -8,8 +8,9 @@ import { setVerbose, info, error } from './utils/logger.js';
 import { loadTarget } from './spec/parser.js';
 import { FuzzEngine } from './fuzzer/engine.js';
 import { getAllChecks, getChecksByIds, listChecks } from './checks/index.js';
+import { getAllWsChecks, getWsChecksByIds, listWsChecks } from './ws/checks.js';
 import { reportTerminal, reportJson } from './reporter/index.js';
-import type { ScanConfig, ScanReport, Severity, Finding, AuthConfig } from './types.js';
+import type { ScanConfig, ScanReport, Severity, Finding, AuthConfig, WsTestReport } from './types.js';
 
 const program = new Command();
 
@@ -215,15 +216,101 @@ program
     }
   });
 
+// ws-test command
+program
+  .command('ws-test')
+  .description('Run security checks against a WebSocket endpoint')
+  .argument('<target>', 'WebSocket URL (ws:// or wss://)')
+  .option('--checks <list>', 'Comma-separated check IDs to run')
+  .option('--exclude-checks <list>', 'Checks to skip')
+  .option('--timeout <ms>', 'Connection timeout in ms', '5000')
+  .option('--output <file>', 'Write report to file')
+  .option('--format <fmt>', 'Output format: terminal, json', 'terminal')
+  .option('--verbose', 'Show detailed test output')
+  .action(async (targetUrl, opts) => {
+    setVerbose(opts.verbose || false);
+
+    // Validate URL scheme
+    if (!targetUrl.startsWith('ws://') && !targetUrl.startsWith('wss://')) {
+      // Auto-upgrade http(s) to ws(s)
+      targetUrl = targetUrl.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:');
+      if (!targetUrl.startsWith('ws://') && !targetUrl.startsWith('wss://')) {
+        targetUrl = `wss://${targetUrl}`;
+      }
+    }
+
+    const timeout = parseInt(opts.timeout);
+
+    const allChecks = opts.checks
+      ? getWsChecksByIds(opts.checks.split(','))
+      : getAllWsChecks().filter(c =>
+          !(opts.excludeChecks || '').split(',').includes(c.info.id)
+        );
+
+    info(`\n OPENPEN v0.1.0 -- WebSocket Security Tester\n`);
+    info(` Target:  ${targetUrl}`);
+    info(` Checks:  ${allChecks.length} modules\n`);
+
+    const startedAt = new Date();
+    const results = [];
+
+    for (const check of allChecks) {
+      info(` Running: ${check.info.name}...`);
+      const result = await check.run(targetUrl, timeout);
+      results.push(result);
+
+      const icon = result.status === 'pass' ? 'OK' :
+                   result.status === 'fail' ? 'FAIL' :
+                   result.status === 'warn' ? 'WARN' : 'ERR';
+      const sev = result.status === 'pass' ? '' : ` [${result.severity.toUpperCase()}]`;
+      info(`   ${icon}${sev} ${result.description}`);
+    }
+
+    const completedAt = new Date();
+    const report: WsTestReport = {
+      target: targetUrl,
+      startedAt: startedAt.toISOString(),
+      completedAt: completedAt.toISOString(),
+      duration: completedAt.getTime() - startedAt.getTime(),
+      results,
+      summary: {
+        pass: results.filter(r => r.status === 'pass').length,
+        fail: results.filter(r => r.status === 'fail').length,
+        warn: results.filter(r => r.status === 'warn').length,
+        error: results.filter(r => r.status === 'error').length,
+      },
+    };
+
+    info(`\n Summary: ${report.summary.pass} pass, ${report.summary.fail} fail, ${report.summary.warn} warn, ${report.summary.error} error`);
+    info(` Duration: ${report.duration}ms\n`);
+
+    if (opts.format === 'json' || opts.output) {
+      const json = JSON.stringify(report, null, 2);
+      if (opts.output) {
+        const { writeFileSync } = await import('fs');
+        writeFileSync(opts.output, json);
+        info(` Report written to ${opts.output}\n`);
+      } else {
+        console.log(json);
+      }
+    }
+  });
+
 // list-checks command
 program
   .command('list-checks')
   .description('List available security check modules')
   .action(() => {
     info(`\n OPENPEN v0.1.0 -- Available Checks\n`);
+    info(` HTTP API Checks:`);
     const checks = listChecks();
     for (const c of checks) {
       info(`  ${c.id.padEnd(20)} ${c.owaspCategory.padEnd(25)} ${c.name}`);
+    }
+    info(`\n WebSocket Checks:`);
+    const wsChecks = listWsChecks();
+    for (const c of wsChecks) {
+      info(`  ${c.id.padEnd(20)} ${''.padEnd(25)} ${c.name}`);
     }
     info('');
   });

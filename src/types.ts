@@ -126,3 +126,43 @@ export interface FuzzResult {
   anomalies: AnomalyType[];
   baseline?: ResponseSummary;
 }
+
+// WebSocket testing
+
+export interface WsTestConfig {
+  timeout: number;
+  verbose: boolean;
+  auth?: AuthConfig;
+  checks: string[];
+  excludeChecks: string[];
+  output?: string;
+  format: 'terminal' | 'json';
+}
+
+export interface WsMessage {
+  direction: 'sent' | 'received';
+  data: string;
+  timestamp: number;
+  parseError?: boolean;
+}
+
+export interface WsTestResult {
+  checkId: string;
+  checkName: string;
+  status: 'pass' | 'fail' | 'warn' | 'error';
+  severity: Severity;
+  description: string;
+  evidence: string;
+  remediation?: string;
+  messages?: WsMessage[];
+  duration: number;
+}
+
+export interface WsTestReport {
+  target: string;
+  startedAt: string;
+  completedAt: string;
+  duration: number;
+  results: WsTestResult[];
+  summary: { pass: number; fail: number; warn: number; error: number };
+}
