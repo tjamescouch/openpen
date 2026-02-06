@@ -207,10 +207,23 @@ const messageSizeLimit: WsCheck = {
           const payload = JSON.stringify({ type: 'PING', data: 'x'.repeat(size) });
           sendRaw(conn, payload);
 
-          // Wait briefly to see if connection stays alive
-          await new Promise(r => setTimeout(r, 500));
+          // Wait for close event; scale with payload size for proxy latency
+          const waitMs = Math.max(2000, Math.min(Math.ceil(size / 256), 6000));
+          await new Promise(r => setTimeout(r, waitMs));
 
-          if (conn.connected) {
+          // Check for error responses (server may reject via error message instead of disconnect)
+          const errorResponse = conn.messages.find(m => {
+            if (m.direction !== 'received') return false;
+            const p = parseJson(m.data);
+            if (!p.parsed) return false;
+            const v = p.value as Record<string, unknown>;
+            const msg = ((v.message || '') as string).toLowerCase();
+            return (v.type === 'ERROR' && (msg.includes('too large') || msg.includes('size')));
+          });
+
+          if (errorResponse) {
+            verbose(`  [ws-size] ${label} -> rejected (error response)`);
+          } else if (conn.connected) {
             maxAccepted = size;
             maxAcceptedLabel = label;
             verbose(`  [ws-size] ${label} -> accepted`);
