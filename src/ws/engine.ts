@@ -48,7 +48,7 @@ export function connect(url: string, options: {
       resolve(conn);
     });
 
-    ws.on('message', (data) => {
+    ws.on('message', (data: WebSocket.Data) => {
       conn.messages.push({
         direction: 'received',
         data: data.toString(),
@@ -56,13 +56,13 @@ export function connect(url: string, options: {
       });
     });
 
-    ws.on('close', (code, reason) => {
+    ws.on('close', (code: number, reason: Buffer) => {
       conn.connected = false;
       conn.closedCode = code;
       conn.closedReason = reason.toString();
     });
 
-    ws.on('error', (err) => {
+    ws.on('error', (err: Error) => {
       clearTimeout(timer);
       if (!conn.connected) {
         reject(err);
