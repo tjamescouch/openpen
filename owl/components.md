@@ -82,6 +82,8 @@ the check engine is a registry of security check modules. each check module exte
   - **ssrf**: sends internal/metadata urls to url-like parameters, detects ssrf indicators in responses and differential behavior.
   - **sensitive-data**: scans responses for leaked secrets (jwts, api keys, aws keys, private keys, passwords, ssns, credit cards), internal ips, stack traces, and probes common leak paths (.env, .git/config, debug endpoints).
   - **mass-assignment**: injects undocumented privilege fields into request bodies on write endpoints, detects acceptance and reflection, tests for prototype pollution.
+  - **prompt-injection**: sends prompt injection payloads to llm-facing input fields, uses canary strings and compliance detection to identify when injected instructions override system prompts.
+  - **llm-leak**: probes for system prompt extraction, tool/function schema leakage, and internal configuration disclosure using extraction payloads with multi-indicator detection.
 
 ### interfaces
 
@@ -104,7 +106,7 @@ the fuzzer sends mutated attack payloads to a target url and detects response an
 
 - concurrency semaphore and rate limiter.
 - optional baseline response for comparison.
-- built-in payload dictionaries: sqli, xss, path-traversal, ssrf, nosql, command-injection.
+- built-in payload dictionaries: sqli, xss, path-traversal, ssrf, nosql, command-injection, prompt-injection, llm-leak.
 
 ### capabilities
 

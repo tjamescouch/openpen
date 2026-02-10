@@ -1,6 +1,6 @@
 {
   "name": "openpen",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Open source CLI for API fuzzing and penetration testing",
   "type": "module",
   "bin": {

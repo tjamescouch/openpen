@@ -11,6 +11,8 @@ import { BrokenAccessControlCheck } from './bac.js';
 import { SsrfCheck } from './ssrf.js';
 import { SensitiveDataCheck } from './sensitive-data.js';
 import { MassAssignmentCheck } from './mass-assignment.js';
+import { PromptInjectionCheck } from './prompt-injection.js';
+import { LlmLeakCheck } from './llm-leak.js';
 
 const ALL_CHECKS: BaseCheck[] = [
   new SecurityHeadersCheck(),
@@ -21,6 +23,8 @@ const ALL_CHECKS: BaseCheck[] = [
   new SsrfCheck(),
   new SensitiveDataCheck(),
   new MassAssignmentCheck(),
+  new PromptInjectionCheck(),
+  new LlmLeakCheck(),
 ];
 
 export function getAllChecks(): BaseCheck[] {
